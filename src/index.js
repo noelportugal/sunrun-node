@@ -68,11 +68,12 @@ class SunRun {
    * setReponse
    * @returns {data}
    */
-  async setReponse(status, message, data) {
+  async setReponse(status, message, data, additionalData={}) {
     return {
       status,
       message,
       data,
+      additionalData,
     }
   }
 
@@ -180,8 +181,8 @@ class SunRun {
    * getDailyBriefing
    * @returns {data}
    */
-  async getDailyBriefing() {
-    let status, message,  data
+  async getDailyBriefing(ggList=['coal', 'propane', 'gasoline']) {
+    let status, message,  data, ggData
     try {
       const cumulativeProduction = await this.getCumulativeProduction()
       // const cumulativeProduction = await JSON.parse(localStorage.getItem('cumulative_production'))
@@ -204,25 +205,29 @@ class SunRun {
         .map((element) => element.deliveredKwh)
         .reduce((a, b) => a + b)
       const allTime = Math.round(today.cumulativeKwh)
-      const greenhouseData = GG.calculateEquivalency(allTime, { keyList: ['coal', 'propane', 'gasoline'] })
-      let greenhouseVerbose = ''
+      const greenhouseData = GG.calculateEquivalency(allTime, { keyList: ggList })
+      let greenhouseArray = []
       greenhouseData.forEach((element) => {
-        greenhouseVerbose += `${Math.floor(element.value)} ${element.description},`
+        greenhouseArray.push(`${Math.floor(element.value)} ${element.description}`)
       })
+      const greenhouseVerbose = greenhouseArray.join(', ').replace(/,(?!.*,)/gmi, ' and')
       status = 'success'
       message = 'success'
-      data = `So far your system has generated ${Math.floor(today.deliveredKwh)} Kwh today, ${Math.floor(
+      data = `So far your system has generated ${Math.ceil(today.deliveredKwh)} kilowatt hours today, ${Math.floor(
         yesterday.deliveredKwh
-      )} Kwh yesterday, ${Math.floor(
+      )} kilowatt hours yesterday, ${Math.floor(
         month
-      )} Kwh in the last 30 days and an all time total of ${allTime} Kwh. This means you’ve already prevented CO₂ emissions equivalent to roughly ${greenhouseVerbose} congrats!`
+      )} kilowatt hours in the last 30 days and an all time total of ${allTime} kilowatt hours. This means you’ve already prevented CO₂ emissions equivalent to roughly ${greenhouseVerbose}. Congratulations!`
+      ggData = greenhouseData
     } catch (e) {
       status = 'error'
       message = e.message
       data = 'Sorry something went wrong.'
     }
 
-    return this.setReponse(status, message, data)
+    const  result = this.setReponse(status, message, data, ggData)
+
+    return result
   }
 }
 
