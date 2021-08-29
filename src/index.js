@@ -83,12 +83,12 @@ class SunRun {
   async requestPasswordless() {
     let success
     try {
-      const data = {
+      const reqData = {
         email: null,
         phone: this.phone,
         prospectId: null,
       }
-      const result = await axios.post(`${this.baseUrl}/portal-auth/request-passwordless`, data)
+      const result = await axios.post(`${this.baseUrl}/portal-auth/request-passwordless`, reqData)
       this.setToken(result.data.token)
       success = true
     } catch (e) {
@@ -109,7 +109,7 @@ class SunRun {
         await this.requestPasswordless()
       }
 
-      const data = {
+      const reqData = {
         email: null,
         phone: this.phone,
         code: code,
@@ -120,7 +120,7 @@ class SunRun {
           Authorization: this.token,
         },
       }
-      const result = await axios.post(`${this.baseUrl}/portal-auth/respond-passwordless`, data, options)
+      const result = await axios.post(`${this.baseUrl}/portal-auth/respond-passwordless`, reqData, options)
       this.setAccessTokens(result.data.data.accessToken)
       this.setProspectId(result.data.opportunitiesWithContracts[0]['prospect_id'])
       localStorage.setItem('start_date', result.data.opportunitiesWithContracts[0].contract.ptoDate)
@@ -162,16 +162,18 @@ class SunRun {
         `${this.baseUrl}/performance-api/v1/cumulative-production/daily/${this.prospectId}`,
         config
       )
-      localStorage.setItem('cumulative_production', JSON.stringify(result.data))
       status  = 'success'
-      message = result
+      message = 'success'
       data = result.data
     } catch (e) {
       status = 'error'
       message = e.message
       data = null
     }
-    return this.setReponse(status, message, data)
+
+    const localResponse = await this.setReponse(status, message, data)
+    localStorage.setItem('cumulative_production', JSON.stringify(localResponse))
+    return localResponse
   }
 
   /**
@@ -182,6 +184,7 @@ class SunRun {
     let status, message,  data
     try {
       const cumulativeProduction = await this.getCumulativeProduction()
+      // const cumulativeProduction = await JSON.parse(localStorage.getItem('cumulative_production'))
 
       if (cumulativeProduction.status === 'error') {
         status = 'error'
@@ -190,9 +193,8 @@ class SunRun {
         return this.setReponse(status, message, data)
       }
 
-      const today = Object.values(cumulativeProduction.data).filter(
-        (item) => item.timestamp === moment(new Date()).format('YYYY-MM-DD')
-      )[0]
+      const todayData = Object.values(cumulativeProduction.data)
+      const today = todayData[todayData.length - 1]
       const yesterday = Object.values(cumulativeProduction.data).filter(
         (item) => item.timestamp === moment(new Date()).subtract(1, 'days').format('YYYY-MM-DD')
       )[0]
@@ -201,7 +203,6 @@ class SunRun {
         .filter((element) => new Date(element.timestamp).getTime() > lastThirtyDays)
         .map((element) => element.deliveredKwh)
         .reduce((a, b) => a + b)
-
       const allTime = Math.round(today.cumulativeKwh)
       const greenhouseData = GG.calculateEquivalency(allTime, { keyList: ['coal', 'propane', 'gasoline'] })
       let greenhouseVerbose = ''
