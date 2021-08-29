@@ -184,8 +184,8 @@ class SunRun {
   async getDailyBriefing(ggList=['coal', 'propane', 'gasoline']) {
     let status, message,  data, ggData
     try {
-      const cumulativeProduction = await this.getCumulativeProduction()
-      // const cumulativeProduction = await JSON.parse(localStorage.getItem('cumulative_production'))
+      // const cumulativeProduction = await this.getCumulativeProduction()
+      const cumulativeProduction = await JSON.parse(localStorage.getItem('cumulative_production'))
 
       if (cumulativeProduction.status === 'error') {
         status = 'error'
@@ -208,7 +208,11 @@ class SunRun {
       const greenhouseData = GG.calculateEquivalency(allTime, { keyList: ggList })
       let greenhouseArray = []
       greenhouseData.forEach((element) => {
-        greenhouseArray.push(`${Math.floor(element.value)} ${element.description}`)
+        if (Math.floor(element.value) === 0){
+          greenhouseArray.push(`${element.value.toFixed(3)} ${element.description}`)
+        }else{
+          greenhouseArray.push(`${Math.floor(element.value)} ${element.description}`)
+        }
       })
       const greenhouseVerbose = greenhouseArray.join(', ').replace(/,(?!.*,)/gmi, ' and')
       status = 'success'
