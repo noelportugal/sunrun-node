@@ -155,7 +155,7 @@ class SunRun {
         },
         params: {
           startDate: `${localStorage.getItem('start_date')}T00:00:00.000-10:00`,
-          endDate: `${moment(new Date()).add(1, 'days').format('YYYY-MM-DD')}T23:59:59.999-10:00`,
+          endDate: `${moment().add(1, 'days').format('YYYY-MM-DD')}T23:59:59.999-10:00`,
         },
       }
 
@@ -184,8 +184,8 @@ class SunRun {
   async getDailyBriefing(ggList=['coal', 'propane', 'gasoline']) {
     let status, message,  data, ggData
     try {
-      // const cumulativeProduction = await this.getCumulativeProduction()
-      const cumulativeProduction = await JSON.parse(localStorage.getItem('cumulative_production'))
+      const cumulativeProduction = await this.getCumulativeProduction()
+      // const cumulativeProduction = await JSON.parse(localStorage.getItem('cumulative_production'))
 
       if (cumulativeProduction.status === 'error') {
         status = 'error'
@@ -197,9 +197,9 @@ class SunRun {
       const todayData = Object.values(cumulativeProduction.data)
       const today = todayData[todayData.length - 1]
       const yesterday = Object.values(cumulativeProduction.data).filter(
-        (item) => item.timestamp === moment(new Date()).subtract(1, 'days').format('YYYY-MM-DD')
+        (item) => item.timestamp === moment().subtract(1, 'days').format('YYYY-MM-DD')
       )[0]
-      const lastThirtyDays = moment(new Date()).subtract(30, 'days').valueOf()
+      const lastThirtyDays = moment().subtract(30, 'days').valueOf()
       const month = Object.values(cumulativeProduction.data)
         .filter((element) => new Date(element.timestamp).getTime() > lastThirtyDays)
         .map((element) => element.deliveredKwh)
