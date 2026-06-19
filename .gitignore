@@ -62,3 +62,6 @@ typings/
 
 # token storage
 example/scratch
+# local token cache (CLI default lives in ~/.sunrun-node)
+.sunrun-node/
+state.json
