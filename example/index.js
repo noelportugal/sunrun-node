@@ -1,17 +1,24 @@
+'use strict'
+// Example: one-time auth, then a daily briefing.
+//
+//   phone=+15551234567 node example/index.js            # step 1: request code
+//   phone=+15551234567 code=123456 node example/index.js # step 2: verify + read
+//
+// After verifying once, you can drop `code` — the cached token is reused.
+
 const SunRun = require('../src/index.js')
 
-const options = {
-  phone: process.env.phone,
-}
-const sunRun = new SunRun(options)
+const sunrun = new SunRun({ phone: process.env.phone })
 
 ;(async () => {
-  // const data = await sunRun.respondPasswordless(process.env.code)
-  const factors = ['gasoline','diesel','miles','therm','oil','tanker','leds','homes_kwh','homes','trees','forest','forest_preserved','propane','coal_rail','coal','recycling','garbage_trucks','trash_bags','coal_power','wind','phones']
-  let randomFactors = []
-  for (var i = 0; i < 3; ++i) {
-      randomFactors[i] = factors[Math.floor(Math.random()*factors.length)];
+  if (!sunrun.isAuthorized() && !process.env.code) {
+    await sunrun.requestPasswordless()
+    console.log('Code sent. Re-run with code=<the 6-digit code> to finish.')
+    return
   }
-  const data = await sunRun.getDailyBriefing(randomFactors)
-  console.log(data)
-})()
+  if (process.env.code) {
+    await sunrun.verifyCode(process.env.code)
+    console.log('Authorized.')
+  }
+  console.log(await sunrun.getDailyBriefing())
+})().catch((e) => { console.error('error:', e.message); process.exit(1) })
