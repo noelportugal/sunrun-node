@@ -1,18 +1,39 @@
 {
   "name": "sunrun-node",
-  "version": "1.0.6",
-  "description": "",
+  "version": "2.0.0",
+  "description": "Unofficial Node client for the mySunrun solar production API (passwordless SMS auth, zero dependencies).",
   "main": "src/index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "bin": {
+    "sunrun": "bin/sunrun.js"
   },
-  "keywords": [],
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "files": [
+    "src",
+    "bin"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/noelportugal/sunrun-node.git"
+  },
+  "keywords": [
+    "sunrun",
+    "solar",
+    "mysunrun",
+    "energy",
+    "production",
+    "photovoltaic",
+    "home-automation"
+  ],
   "author": "Noel Portugal",
-  "license": "ISC",
-  "dependencies": {
-    "axios": "^0.21.1",
-    "greenhouse-gas": "^1.0.2",
-    "moment": "^2.29.1",
-    "node-localstorage": "^2.2.1"
-  }
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/noelportugal/sunrun-node/issues"
+  },
+  "homepage": "https://github.com/noelportugal/sunrun-node#readme"
 }
