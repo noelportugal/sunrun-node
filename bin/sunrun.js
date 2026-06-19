@@ -72,9 +72,34 @@ async function main() {
     return
   }
 
+  if (cmd === 'energy') {
+    const scale = sub && !sub.startsWith('--') ? sub : 'daily'
+    if (process.argv.includes('--flow')) {
+      console.log(JSON.stringify(await client.getEnergyFlow(scale), null, 2))
+    } else {
+      console.log(JSON.stringify(await client.getEnergySummary(), null, 2))
+    }
+    return
+  }
+
+  if (cmd === 'battery') {
+    if (sub === 'history') {
+      console.log(JSON.stringify(await client.getBattery(), null, 2))
+    } else {
+      console.log(JSON.stringify(await client.getBatteryStatus(), null, 2))
+    }
+    return
+  }
+
+  if (cmd === 'system') {
+    console.log(JSON.stringify(await client.getSystemInfo(), null, 2))
+    return
+  }
+
   console.error(
     'usage: sunrun auth request [--phone +1..] | auth verify <code> | status | ' +
-    'production [--json] | briefing [factors...]')
+    'production [--json] | briefing [factors...] | energy [scale] [--flow] | ' +
+    'battery [history] | system')
   process.exit(2)
 }
 

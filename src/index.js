@@ -70,6 +70,9 @@ class SunRun {
   constructor(options = {}) {
     this.baseUrl = options.baseUrl || BASE_URL
     this.phone = options.phone || null
+    // The portal stamps date ranges in the site's local offset. Defaults to
+    // Hawaii (-10:00) to match the original repo; override for other sites.
+    this.tzOffset = options.tzOffset || '-10:00'
     this.store = options.tokenStore ||
       new FileTokenStore(options.statePath ||
         path.join(os.homedir(), '.sunrun-node', 'state.json'))
@@ -229,6 +232,228 @@ class SunRun {
     }
   }
 
+  // --- shared helpers -------------------------------------------------------
+
+  /** Authorized GET against gateway, with friendly auth errors. */
+  async _authedGet(endpoint, params) {
+    const auth = this.store.get('accessToken')
+    const prospectId = this.store.get('prospectId')
+    if (!auth || !prospectId) {
+      throw new Error('not authorized — call requestPasswordless() then verifyCode(code)')
+    }
+    try {
+      return await this._fetch('GET', endpoint, params ? { auth, params } : { auth })
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) {
+        throw new Error('access token expired/invalid — re-auth with requestPasswordless() + verifyCode()')
+      }
+      throw e
+    }
+  }
+
+  /** Build a {startDate,endDate} param pair in the site's local offset. */
+  _range(start, end) {
+    const ymd = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10))
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
+    const startD = start || (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d })()
+    return {
+      startDate: `${ymd(startD)}T00:00:00.000${this.tzOffset}`,
+      endDate: `${ymd(end || tomorrow)}T23:59:59.999${this.tzOffset}`,
+    }
+  }
+
+  // --- energy flow (solar + consumption + grid + battery) -------------------
+
+  /**
+   * Normalized energy-flow series at the given resolution. Unlike production,
+   * each point includes consumption and grid import/export — the whole picture.
+   * @param {'minute'|'daily'|'monthly'|'yearly'} [scale='daily']
+   * @param {{start?: Date|string, end?: Date|string}} [range]
+   * @returns {Array<object>} normalized rows (see normalizeFlow)
+   */
+  async getEnergyFlow(scale = 'daily', { start, end } = {}) {
+    const prospectId = this.store.get('prospectId')
+    const ep = `/performance-api/v1/site-production-${scale}/${prospectId}`
+    const rows = await this._authedGet(ep, this._range(start, end))
+    return SunRun.normalizeFlow(rows)
+  }
+
+  /**
+   * Whole-home energy summary: today / yesterday / last-30-day totals across
+   * solar, consumption and grid import/export.
+   * @returns {object|null}
+   */
+  async getEnergySummary() {
+    const rows = await this.getEnergyFlow('daily')
+    return SunRun.summarizeFlow(rows)
+  }
+
+  /** Pure: map raw site-production rows to a stable, named shape. */
+  static normalizeFlow(rows) {
+    return (Array.isArray(rows) ? rows : [])
+      .filter((r) => r && r.timestamp)
+      .map((r) => ({
+        timestamp: r.timestamp,
+        solarKwh: num(r.solar),
+        pvKwh: num(r.pvSolar ?? r.systemProduction),
+        consumptionKwh: num(r.consumption),
+        gridImportKwh: num(r.importReading),
+        gridExportKwh: Math.abs(num(r.exportReading)), // raw is negative
+        selfConsumptionKwh: num(r.selfConsumption),
+        batteryChargeKwh: num(r.batterySolar),
+      }))
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+  }
+
+  /** Pure: today/yesterday/last-30 totals from a normalized flow series. */
+  static summarizeFlow(rows) {
+    if (!rows || !rows.length) return null
+    const today = rows[rows.length - 1]
+    const yesterday = rows[rows.length - 2] || null
+    const cutoff = Date.now() - 30 * 86400000
+    const recent = rows.filter((r) => new Date(r.timestamp).getTime() > cutoff)
+    const sum = (k) => round1(recent.reduce((s, r) => s + (r[k] || 0), 0))
+    const pick = (r) => r && ({
+      solarKwh: round1(r.solarKwh), consumptionKwh: round1(r.consumptionKwh),
+      gridImportKwh: round1(r.gridImportKwh), gridExportKwh: round1(r.gridExportKwh),
+      selfConsumptionKwh: round1(r.selfConsumptionKwh),
+    })
+    return {
+      today: pick(today),
+      yesterday: pick(yesterday),
+      last30: {
+        solarKwh: sum('solarKwh'), consumptionKwh: sum('consumptionKwh'),
+        gridImportKwh: sum('gridImportKwh'), gridExportKwh: sum('gridExportKwh'),
+        selfConsumptionKwh: sum('selfConsumptionKwh'),
+      },
+      asOf: today.timestamp,
+    }
+  }
+
+  // --- battery --------------------------------------------------------------
+
+  /**
+   * Battery history: per-unit and combined daily state-of-charge range plus
+   * charge/discharge. Sunrun returns one group per physical battery plus a
+   * combined pack aggregate (the unnamed group).
+   * @param {{start?: Date|string, end?: Date|string}} [range]
+   */
+  async getBattery({ start, end } = {}) {
+    const prospectId = this.store.get('prospectId')
+    const groups = await this._authedGet(
+      `/performance-api/v1/battery-daily-aggregated/${prospectId}`, this._range(start, end))
+    return SunRun.normalizeBatteryDaily(groups)
+  }
+
+  /**
+   * Latest pack state-of-charge (and per-unit), from the 30-min feed.
+   * Sunrun's data lags a few hours, so `lagHours` is reported for honesty.
+   * @returns {{soc: number|null, asOf: string|null, lagHours: number|null, perBattery: object[]}}
+   */
+  async getBatteryStatus() {
+    const prospectId = this.store.get('prospectId')
+    const d = new Date(); d.setDate(d.getDate() - 2)
+    const groups = await this._authedGet(
+      `/performance-api/v1/battery-minute/${prospectId}`, this._range(d))
+    return SunRun.latestBatterySoc(groups)
+  }
+
+  /** Pure: split battery-daily-aggregated groups into per-unit + aggregate. */
+  static normalizeBatteryDaily(groups) {
+    const g = Array.isArray(groups) ? groups : []
+    const mapDaily = (pd) => (pd || []).map((p) => ({
+      date: String(p.timestamp).slice(0, 10),
+      maxSoc: round1(num(p.maxBatteryPercentageState)),
+      minSoc: round1(num(p.minBatteryPercentageState)),
+      chargeKwh: round1(num(p.batteryCharge)),
+      dischargeKwh: round1(num(p.batteryDischarge)),
+    })).sort((a, b) => new Date(a.date) - new Date(b.date))
+    const named = g.filter((x) => x.name)
+    const agg = g.find((x) => !x.name) || null
+    return {
+      batteries: named.map((x) => ({
+        name: x.name, manufacturer: x.manufacturer || null,
+        model: x.model || null, serialNumber: x.serialNumber || null,
+        daily: mapDaily(x.performanceData),
+      })),
+      aggregate: agg ? { daily: mapDaily(agg.performanceData) } : null,
+    }
+  }
+
+  /** Pure: latest non-null SOC across battery-minute groups → pack average. */
+  static latestBatterySoc(groups) {
+    const g = Array.isArray(groups) ? groups : []
+    const perBattery = []
+    let asOf = null
+    for (const grp of g) {
+      const pts = (grp.performanceData || [])
+        .filter((p) => p.averageBatteryPercentageState != null)
+        .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+      const last = pts[pts.length - 1]
+      if (!last) continue
+      perBattery.push({ name: grp.name || null, soc: round1(last.averageBatteryPercentageState) })
+      if (!asOf || new Date(last.timestamp) > new Date(asOf)) asOf = last.timestamp
+    }
+    const soc = perBattery.length
+      ? round1(perBattery.reduce((s, b) => s + b.soc, 0) / perBattery.length)
+      : null
+    const lagHours = asOf ? Math.round(((Date.now() - new Date(asOf)) / 3600000) * 10) / 10 : null
+    return { soc, asOf, lagHours, perBattery }
+  }
+
+  // --- system / capabilities ------------------------------------------------
+
+  /**
+   * System configuration: capabilities (solar/storage/consumption) and
+   * hardware inventory (panels, inverters, batteries).
+   */
+  async getSystemInfo() {
+    const prospectId = this.store.get('prospectId')
+    const auth = this.store.get('accessToken')
+    if (!auth || !prospectId) {
+      throw new Error('not authorized — call requestPasswordless() then verifyCode(code)')
+    }
+    const [offerings, overview] = await Promise.all([
+      this._authedGet(`/performance-api/v1/product-offerings/${prospectId}`),
+      this._fetch('POST', '/portal-user/system-overview', { auth, body: { prospectId } })
+        .catch(() => null),
+    ])
+    return SunRun.normalizeSystemInfo(offerings, overview)
+  }
+
+  /** Pure: merge product-offerings + system-overview into a clean profile. */
+  static normalizeSystemInfo(offerings = {}, overview = null) {
+    const site = Array.isArray(overview) ? overview[0]?.data?.site : overview?.data?.site
+    const edges = (x) => (x?.edges || []).map((e) => e.node).filter(Boolean)
+    const chars = edges(site?.systemsCharacteristics)
+    const panels = []
+    for (const c of chars) {
+      panels.push({ manufacturer: c.panelMfg, model: c.panelModel, count: Number(c.numPanels) || 0 })
+    }
+    return {
+      systemSizeKwDc: Number(offerings.system_size) || (site ? Number(site.systemSizeDC) : null),
+      azimuth: offerings.system_azimuth != null ? Number(offerings.system_azimuth) : null,
+      ptoDate: offerings.ptoDate || null,
+      capabilities: {
+        solar: !!offerings.hasSolar,
+        storage: !!offerings.hasStorage,
+        consumption: !!offerings.hasConsumption,
+        brightBox: !!offerings.brightBox,
+      },
+      location: offerings.lat && offerings.lon
+        ? { lat: Number(offerings.lat), lon: Number(offerings.lon) }
+        : (site?.address ? { lat: Number(site.address.lat), lon: Number(site.address.lon) } : null),
+      panels,
+      inverters: edges(site?.inverter).map((n) => ({
+        name: n.name, model: n.model, serialNumber: n.serialNumber, manufacturer: n.manufacturer,
+      })),
+      batteries: edges(site?.battery).map((n) => ({
+        name: n.name, model: n.model, serialNumber: n.serialNumber,
+        manufacturer: n.manufacturer, vendor: n.vendorName,
+      })),
+    }
+  }
+
   /**
    * Friendly one-paragraph briefing string, with a couple of CO₂ equivalents.
    * @param {string[]} [factors] Which equivalents to include. Any of:
@@ -268,6 +493,7 @@ class SunRun {
 }
 
 function round1(n) { return Math.round(n * 10) / 10 }
+function num(n) { return typeof n === 'number' && isFinite(n) ? n : 0 }
 function fmt(n) {
   return n >= 1 ? Math.round(n).toLocaleString() : Number(n.toFixed(2)).toString()
 }
