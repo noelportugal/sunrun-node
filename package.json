@@ -1,6 +1,6 @@
 {
   "name": "sunrun-node",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Unofficial Node client for the mySunrun solar production API (passwordless SMS auth, zero dependencies).",
   "main": "src/index.js",
   "bin": {
